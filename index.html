@@ -67,7 +67,7 @@
         const SKILL_SLOTS = 6;
         const SKILL_MAX_PER_SLOT = 20;   // 每一格最高分
         const SKILL_TOTAL_CAP = SKILL_SLOTS * SKILL_MAX_PER_SLOT;   // 專項技能總分上限：6 格 × 20 分 = 120 (如要限制，改成想要的數字)
-        const SKILL_OPTIONS = ["籃球", "排球", "手球", "足球", "羽毛球", "乒乓球", "跳舞", "標槍", "跳遠", "跳高", "鐵餅", "鉛球", "其他"];
+        const SKILL_OPTIONS = ["籃球", "排球", "足球", "羽毛球", "乒乓球", "跳舞", "田徑", "游泳", "體操", "其他"];
         const EMPTY_SKILLS = { skillItem1: "", skillPts1: 0, skillItem2: "", skillPts2: 0, skillItem3: "", skillPts3: 0, skillItem4: "", skillPts4: 0, skillItem5: "", skillPts5: 0, skillItem6: "", skillPts6: 0 };
 
         const calcSkillTotal = (s) => {
@@ -280,6 +280,7 @@
             // 🖊 本機「尚未同步」的修改欄位：同步時只上傳這些欄位，避免覆蓋其他老師已輸入的成績
             const [dirty, setDirty] = useState(() => safeLocalStorage.getItem('pe_dirty_v1', {}));
             const dirtyRef = useRef(dirty);
+            const importColsRef = useRef({});
             useEffect(() => { dirtyRef.current = dirty; safeLocalStorage.setItem('pe_dirty_v1', dirty); }, [dirty]);
 
             // 匯出篩選控制
@@ -825,6 +826,8 @@
                             return n;
                         });
                         showToast(`☁️ 雙向雲端同步成功！本次更新 ${result.count !== undefined ? result.count : '-'} 位學生的成績，常模基準已備份。`);
+                        // 同步成功後自動讀回雲端，讓畫面立即顯示其他老師已輸入的成績 (本機未同步的輸入不會被覆蓋)
+                        await loadDataFromCloud();
                     } else {
                         throw new Error(result.message || 'Apps Script 處理異常');
                     }
@@ -894,6 +897,7 @@
                             if (field) colIndices[field] = index;
                         });
 
+                        importColsRef.current = { ...colIndices };
                         if (colIndices.name === undefined) {
                             setImportError("找不到『姓名』欄位，請確認首行標題。");
                             setPreviewStudents([]);
@@ -980,11 +984,26 @@
                 evt.target.value = null; 
             };
 
+            // 匯入時只標記「Excel 有這一欄、而且有填數值」的欄位為已修改，空白或 0 不會覆蓋雲端上別人輸入的成績
+            const getImportDirty = (s) => {
+                const cols = importColsRef.current || {};
+                const d = { name: true };
+                ['class', 'number', 'gender', 'isDsePe'].forEach(k => { if (cols[k] !== undefined) d[k] = true; });
+                ['attendance', 'sitUpsRaw', 'pushUpsRaw', 'runLapsRaw', 'sitReachRaw', 'run1000Raw', 'dseSitUpsRaw', 'dsePullUpsRaw', 'dseRun1609Raw', 'dseSitReachRaw', 'height', 'weight'].forEach(k => {
+                    if (cols[k] !== undefined && (parseFloat(s[k]) || 0) > 0) d[k] = true;
+                });
+                if (cols.conductGrade !== undefined && s.conductGrade) d.conductGrade = true;
+                [['basketball', 1], ['dance', 2], ['extraSkill', 3]].forEach(([k, n]) => {
+                    if (cols[k] !== undefined && (parseInt(s['skillPts' + n]) || 0) > 0) { d['skillPts' + n] = true; d['skillItem' + n] = true; }
+                });
+                return d;
+            };
+
             const confirmImport = () => {
                 if (previewStudents.length > 0) {
                     setStudents(previewStudents);
                     forceSaveData(previewStudents);
-                    setDirty(prev => { const n = { ...prev }; previewStudents.forEach(s => { n[s.id] = Object.keys(s).reduce((o, k) => { o[k] = true; return o; }, {}); }); return n; });
+                    setDirty(prev => { const n = { ...prev }; previewStudents.forEach(s => { n[s.id] = getImportDirty(s); }); return n; });
                     setCurrentMobileIndex(0);
                     setCurrentPage(1);
                     showToast(`✅ 成功導入 ${previewStudents.length} 筆學生資料！`);
@@ -1005,7 +1024,7 @@
                     class: String(newStudent.class).toUpperCase().trim()
                 };
                 const updatedList = [...students, created];
-                setDirty(prev => ({ ...prev, [created.id]: Object.keys(created).reduce((o, k) => { o[k] = true; return o; }, {}) }));
+                setDirty(prev => ({ ...prev, [created.id]: { class: true, number: true, name: true, gender: true, isDsePe: true, attendance: true, conductGrade: true } }));
                 setStudents(updatedList);
                 forceSaveData(updatedList);
                 setAddModalOpen(false);
