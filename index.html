@@ -63,6 +63,37 @@
             return (ww / Math.pow(hh / 100, 2)).toFixed(1);
         };
 
+        // ==================== 專項運動技能 (6 格，項目可選) ====================
+        const SKILL_SLOTS = 6;
+        const SKILL_MAX_PER_SLOT = 20;   // 每一格最高分
+        const SKILL_TOTAL_CAP = SKILL_SLOTS * SKILL_MAX_PER_SLOT;   // 專項技能總分上限：6 格 × 20 分 = 120 (如要限制，改成想要的數字)
+        const SKILL_OPTIONS = ["籃球", "排球", "足球", "羽毛球", "乒乓球", "跳舞", "田徑", "游泳", "體操", "其他"];
+        const EMPTY_SKILLS = { skillItem1: "", skillPts1: 0, skillItem2: "", skillPts2: 0, skillItem3: "", skillPts3: 0, skillItem4: "", skillPts4: 0, skillItem5: "", skillPts5: 0, skillItem6: "", skillPts6: 0 };
+
+        const calcSkillTotal = (s) => {
+            let t = 0;
+            for (let i = 1; i <= SKILL_SLOTS; i++) t += parseInt(s['skillPts' + i]) || 0;
+            return Math.min(SKILL_TOTAL_CAP, t);
+        };
+
+        // 舊資料 (籃球 / 跳舞 / 其他) 自動轉入新的 6 格，不會丟失原有分數
+        const normalizeStudent = (s) => {
+            if (!s) return s;
+            const out = { ...s };
+            if (out.skillItem1 === undefined && out.skillPts1 === undefined) {
+                [['籃球', out.basketball], ['跳舞', out.dance], ['其他', out.extraSkill]].forEach(([name, v], i) => {
+                    const pts = Math.min(SKILL_MAX_PER_SLOT, Math.max(0, parseInt(v) || 0));
+                    out['skillItem' + (i + 1)] = pts > 0 ? name : '';
+                    out['skillPts' + (i + 1)] = pts;
+                });
+            }
+            for (let i = 1; i <= SKILL_SLOTS; i++) {
+                if (out['skillItem' + i] === undefined) out['skillItem' + i] = '';
+                if (out['skillPts' + i] === undefined) out['skillPts' + i] = 0;
+            }
+            return out;
+        };
+
         // ==================== ULTRA-SAFE STORAGE SANDBOX WRAPPERS ====================
         const memoryStorage = {};
         const safeLocalStorage = {
@@ -200,7 +231,7 @@
             const [showPassword, setShowPassword] = useState(false);
 
             // 💡 關鍵更動：所有 LocalStorage 金鑰從 v16_force 全部升級到 v17_clear 以強制重寫並乾淨初始！
-            const [students, setStudents] = useState(() => safeLocalStorage.getItem('pe_students_data_v17_clear', DEFAULT_STUDENTS));
+            const [students, setStudents] = useState(() => (safeLocalStorage.getItem('pe_students_data_v17_clear', DEFAULT_STUDENTS) || []).map(normalizeStudent));
             const [activeTab, setActiveTab] = useState('mobile'); 
             const [searchQuery, setSearchQuery] = useState('');
             const [selectedClass, setSelectedClass] = useState('All');
@@ -241,7 +272,7 @@
             const [addModalOpen, setAddModalOpen] = useState(false);
             
             // 💡 預設一千米跑 (run1000Raw) 和 DSE 1609米跑 (dseRun1609Raw) 為 0 
-            const [newStudent, setNewStudent] = useState({ class: "2A", number: "", name: "", gender: "M", isDsePe: false, attendance: 0, conductGrade: "B", sitUpsRaw: 0, pushUpsRaw: 0, runLapsRaw: 0, sitReachRaw: 0, run1000Raw: 0, dseSitUpsRaw: 0, dsePullUpsRaw: 0, dseRun1609Raw: 0, dseSitReachRaw: 0, basketball: 0, dance: 0, extraSkill: 0 });
+            const [newStudent, setNewStudent] = useState({ class: "2A", number: "", name: "", gender: "M", isDsePe: false, attendance: 0, conductGrade: "B", sitUpsRaw: 0, pushUpsRaw: 0, runLapsRaw: 0, sitReachRaw: 0, run1000Raw: 0, dseSitUpsRaw: 0, dsePullUpsRaw: 0, dseRun1609Raw: 0, dseSitReachRaw: 0, ...EMPTY_SKILLS });
             const [confirmModal, setConfirmModal] = useState(null);
 
             const [hasUnsavedConfig, setHasUnsavedConfig] = useState(false);
@@ -335,8 +366,9 @@
                             });
                             // 本機新增、尚未同步到雲端的學生也保留
                             students.forEach(s => { if (!cloudIds[s.id] && dirtyNow[s.id]) merged.push(s); });
-                            setStudents(merged);
-                            forceSaveData(merged);
+                            const normalizedMerged = merged.map(normalizeStudent);
+                            setStudents(normalizedMerged);
+                            forceSaveData(normalizedMerged);
                         }
                         if (result.config) {
                             const c = result.config;
@@ -576,6 +608,8 @@
 
                             if (field === 'height') updated.height = Math.min(250, Math.max(0, Math.round((parseFloat(val) || 0) * 10) / 10));
                             if (field === 'weight') updated.weight = Math.min(300, Math.max(0, Math.round((parseFloat(val) || 0) * 10) / 10));
+                            if (/^skillPts[1-6]$/.test(field)) updated[field] = Math.min(SKILL_MAX_PER_SLOT, Math.max(0, parseInt(val) || 0));
+                            if (/^skillItem[1-6]$/.test(field)) updated[field] = String(val || '');
                             if (field === 'basketball') updated.basketball = Math.min(9, Math.max(0, parseInt(val) || 0));
                             if (field === 'dance') updated.dance = Math.min(11, Math.max(0, parseInt(val) || 0));
                             if (field === 'extraSkill') updated.extraSkill = Math.min(20, Math.max(0, parseInt(val) || 0));
@@ -607,7 +641,7 @@
                 const dseSitReach = calculateDseSitReachScore(currentStudent.gender, currentStudent.dseSitReachRaw || 0);
                 const dseTotalFitness = dseSitUp + dsePullUp + dseRun1609 + dseSitReach;
 
-                const skill = Math.min(20, (currentStudent.basketball || 0) + (currentStudent.dance || 0) + (currentStudent.extraSkill || 0));
+                const skill = calcSkillTotal(currentStudent);
                 
                 // 區分常規(100分) 或 DSE(20分) 體能
                 const fitnessTotal = currentStudent.isDsePe ? dseTotalFitness : (sitUp + pushUp + runLaps + sitReach + run1000);
@@ -638,7 +672,7 @@
                 }
 
                 let csvContent = "data:text/csv;charset=utf-8,\uFEFF";
-                csvContent += "班別,學號,姓名,性別,課程分類,出席次數(20),學習態度操守,身高(cm),體重(kg),BMI,SitUp次數,SitUp得分,掌上壓次數,掌上壓得分,九分鐘跑圈數,九分鐘跑得分,坐地前伸cm,坐地前伸得分,一千米秒數,一千米得分,DSE-SitUp次數,DSE-SitUp得分,DSE-引體上升次/秒,DSE-引體得分,DSE-1609米跑秒數,DSE-1609得分,DSE-坐地前伸cm,DSE-坐地得分,籃球(9),跳舞(11),其他項目,技能總分(20),原始總和,最終總分(100),等級\r\n";
+                csvContent += "班別,學號,姓名,性別,課程分類,出席次數(20),學習態度操守,身高(cm),體重(kg),BMI,SitUp次數,SitUp得分,掌上壓次數,掌上壓得分,九分鐘跑圈數,九分鐘跑得分,坐地前伸cm,坐地前伸得分,一千米秒數,一千米得分,DSE-SitUp次數,DSE-SitUp得分,DSE-引體上升次/秒,DSE-引體得分,DSE-1609米跑秒數,DSE-1609得分,DSE-坐地前伸cm,DSE-坐地得分,專項1項目,專項1分數,專項2項目,專項2分數,專項3項目,專項3分數,專項4項目,專項4分數,專項5項目,專項5分數,專項6項目,專項6分數,技能總分,原始總和,最終總分(100),等級\r\n";
                 
                 targetList.forEach(s => {
                     const conductScore = CONDUCT_RULES[s.conductGrade] || 0;
@@ -655,14 +689,15 @@
                     const dseRun1609 = isDse ? calculateDseRun1609Score(s.gender, s.dseRun1609Raw || 0) : "";
                     const dseSitReach = isDse ? calculateDseSitReachScore(s.gender, s.dseSitReachRaw || 0) : "";
 
-                    const skillScore = Math.min(20, (s.basketball || 0) + (s.dance || 0) + (s.extraSkill || 0));
+                    const skillScore = calcSkillTotal(s);
+                    const skillCells = [1, 2, 3, 4, 5, 6].map(n => `${s['skillItem' + n] || ''},${s['skillPts' + n] || 0}`).join(',');
                     
                     const fitnessTotal = isDse ? (Number(dseSitUp) + Number(dsePullUp) + Number(dseRun1609) + Number(dseSitReach)) : (Number(sitUpScore) + Number(pushUpScore) + Number(runScore) + Number(sitReachScore) + Number(run1000Score));
                     const rawTotal = s.attendance + conductScore + fitnessTotal + skillScore;
                     const total100 = Math.min(100, rawTotal);
                     const grade = calculateGrade(total100);
 
-                    csvContent += `${s.class},${s.number},${s.name},${s.gender},${isDse ? 'DSE' : '常規'},${s.attendance},${s.conductGrade}(${conductScore}),${s.height || ""},${s.weight || ""},${calcBMI(s.height, s.weight)},${isDse ? "" : s.sitUpsRaw},${sitUpScore},${isDse ? "" : (s.pushUpsRaw || 0)},${pushUpScore},${isDse ? "" : s.runLapsRaw},${runScore},${isDse ? "" : (s.sitReachRaw || 0)},${sitReachScore},${isDse ? "" : (s.run1000Raw || 0)},${run1000Score},${isDse ? (s.dseSitUpsRaw || 0) : ""},${dseSitUp},${isDse ? (s.dsePullUpsRaw || 0) : ""},${dsePullUp},${isDse ? (s.dseRun1609Raw || 0) : ""},${dseRun1609},${isDse ? (s.dseSitReachRaw || 0) : ""},${dseSitReach},${s.basketball},${s.dance},${s.extraSkill || 0},${skillScore},${rawTotal},${total100},${grade}\r\n`;
+                    csvContent += `${s.class},${s.number},${s.name},${s.gender},${isDse ? 'DSE' : '常規'},${s.attendance},${s.conductGrade}(${conductScore}),${s.height || ""},${s.weight || ""},${calcBMI(s.height, s.weight)},${isDse ? "" : s.sitUpsRaw},${sitUpScore},${isDse ? "" : (s.pushUpsRaw || 0)},${pushUpScore},${isDse ? "" : s.runLapsRaw},${runScore},${isDse ? "" : (s.sitReachRaw || 0)},${sitReachScore},${isDse ? "" : (s.run1000Raw || 0)},${run1000Score},${isDse ? (s.dseSitUpsRaw || 0) : ""},${dseSitUp},${isDse ? (s.dsePullUpsRaw || 0) : ""},${dsePullUp},${isDse ? (s.dseRun1609Raw || 0) : ""},${dseRun1609},${isDse ? (s.dseSitReachRaw || 0) : ""},${dseSitReach},${skillCells},${skillScore},${rawTotal},${total100},${grade}\r\n`;
                 });
 
                 const encodedUri = encodeURI(csvContent);
@@ -700,12 +735,17 @@
                         const dseRun1609 = isDse ? calculateDseRun1609Score(student.gender, student.dseRun1609Raw || 0) : "";
                         const dseSitReach = isDse ? calculateDseSitReachScore(student.gender, student.dseSitReachRaw || 0) : "";
 
-                        const skillScore = Math.min(20, (student.basketball || 0) + (student.dance || 0) + (student.extraSkill || 0));
+                        const skillScore = calcSkillTotal(student);
                         
                         const realFitnessTotal = isDse ? (Number(dseSitUp) + Number(dsePullUp) + Number(dseRun1609) + Number(dseSitReach)) : (Number(sitUpScore) + Number(pushUpScore) + Number(runScore) + Number(sitReachScore) + Number(run1000Score));
                         const rawTotal = student.attendance + conductScore + realFitnessTotal + skillScore;
                         const totalScore = Math.min(100, rawTotal); 
                         const grade = calculateGrade(totalScore);
+                        const skillPayload = {};
+                        for (let n = 1; n <= SKILL_SLOTS; n++) {
+                            skillPayload['skillItem' + n] = student['skillItem' + n] || '';
+                            skillPayload['skillPts' + n] = parseInt(student['skillPts' + n]) || 0;
+                        }
 
                         return {
                             id: student.id,
@@ -738,9 +778,7 @@
                             dseRun1609Score: dseRun1609,
                             dseSitReachRaw: isDse ? (student.dseSitReachRaw || 0) : "",
                             dseSitReachScore: dseSitReach,
-                            basketball: student.basketball,
-                            dance: student.dance,
-                            extraSkill: student.extraSkill || 0,
+                            ...skillPayload,
                             skillScore: skillScore,
                             totalScore: totalScore,
                             grade: grade
@@ -901,7 +939,7 @@
                             const height = colIndices.height !== undefined ? parseFloat(row[colIndices.height]) || 0 : 0;
                             const weight = colIndices.weight !== undefined ? parseFloat(row[colIndices.weight]) || 0 : 0;
 
-                            parsedStudents.push({
+                            parsedStudents.push(normalizeStudent({
                                 id: Date.now() + idx, class: classVal, number: numberVal, name: studentName, gender: gender, isDsePe: isDsePe,
                                 attendance: Math.min(20, Math.max(0, isNaN(attendanceVal) ? 20 : attendanceVal)),
                                 conductGrade: CONDUCT_RULES[conductGrade] !== undefined ? conductGrade : "B",
@@ -921,7 +959,7 @@
                                 extraSkill: Math.min(20, Math.max(0, isNaN(extraSkill) ? 0 : extraSkill)),
                                 height: height,
                                 weight: weight
-                            });
+                            }));
                         });
 
                         if (parsedStudents.length === 0) {
@@ -971,7 +1009,7 @@
                 setStudents(updatedList);
                 forceSaveData(updatedList);
                 setAddModalOpen(false);
-                setNewStudent({ class: "2A", number: "", name: "", gender: "M", isDsePe: false, attendance: 0, conductGrade: "B", sitUpsRaw: 0, pushUpsRaw: 0, runLapsRaw: 0, sitReachRaw: 0, run1000Raw: 0, dseSitUpsRaw: 0, dsePullUpsRaw: 0, dseRun1609Raw: 0, dseSitReachRaw: 0, basketball: 0, dance: 0, extraSkill: 0 });
+                setNewStudent({ class: "2A", number: "", name: "", gender: "M", isDsePe: false, attendance: 0, conductGrade: "B", sitUpsRaw: 0, pushUpsRaw: 0, runLapsRaw: 0, sitReachRaw: 0, run1000Raw: 0, dseSitUpsRaw: 0, dsePullUpsRaw: 0, dseRun1609Raw: 0, dseSitReachRaw: 0, ...EMPTY_SKILLS });
                 showToast(`➕ 已新增學生：${created.name}`);
             };
 
@@ -1401,22 +1439,27 @@
                                     )
                                 ),
 
-                                // 3. 專項運動技能
+                                // 3. 專項運動技能 (6 格，項目可選)
                                 e('div', { className: "bg-green-50/50 rounded-xl p-3 border border-green-100" },
-                                    e('h4', { className: "text-xs font-bold text-emerald-800 uppercase tracking-wider mb-2 flex items-center gap-1" }, e(Icon, { name: "medal", className: "w-3.5 h-3.5 text-emerald-700" }), " 3. 專項運動技能評核 (最高加分 20)"),
-                                    e('div', { className: "grid grid-cols-3 gap-2" },
-                                        e('div', { className: "bg-white p-2 rounded-lg border border-green-100 text-center shadow-sm" },
-                                            e('label', { className: "block text-[9px] font-bold text-slate-400 mb-1" }, "籃球技術 (滿分 9)"),
-                                            e('div', { className: "flex items-center gap-1 justify-center" }, e('button', { onClick: () => updateStudentValue(currentStudent.id, 'basketball', currentStudent.basketball - 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "-"), e('span', { className: "text-xs font-bold w-4 text-center" }, currentStudent.basketball), e('button', { onClick: () => updateStudentValue(currentStudent.id, 'basketball', currentStudent.basketball + 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "+"))
-                                        ),
-                                        e('div', { className: "bg-white p-2 rounded-lg border border-green-100 text-center shadow-sm" },
-                                            e('label', { className: "block text-[9px] font-bold text-slate-400 mb-1" }, "舞蹈動作 (滿分 11)"),
-                                            e('div', { className: "flex items-center gap-1 justify-center" }, e('button', { onClick: () => updateStudentValue(currentStudent.id, 'dance', currentStudent.dance - 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "-"), e('span', { className: "text-xs font-bold w-4 text-center" }, currentStudent.dance), e('button', { onClick: () => updateStudentValue(currentStudent.id, 'dance', currentStudent.dance + 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "+"))
-                                        ),
-                                        e('div', { className: "bg-white p-2 rounded-lg border border-green-100 text-center shadow-sm" },
-                                            e('label', { className: "block text-[9px] font-bold text-slate-400 mb-1" }, "其他加分 (最高 20)"),
-                                            e('div', { className: "flex items-center gap-1 justify-center" }, e('button', { onClick: () => updateStudentValue(currentStudent.id, 'extraSkill', currentStudent.extraSkill - 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "-"), e('span', { className: "text-xs font-bold w-4 text-center" }, currentStudent.extraSkill), e('button', { onClick: () => updateStudentValue(currentStudent.id, 'extraSkill', currentStudent.extraSkill + 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "+"))
-                                        )
+                                    e('h4', { className: "text-xs font-bold text-emerald-800 uppercase tracking-wider mb-2 flex items-center gap-1" }, e(Icon, { name: "medal", className: "w-3.5 h-3.5 text-emerald-700" }), ` 3. 專項運動技能評核 (每格最高 ${SKILL_MAX_PER_SLOT} 分，技能總分上限 ${SKILL_TOTAL_CAP})`),
+                                    e('div', { className: "grid grid-cols-2 sm:grid-cols-3 gap-2" },
+                                        [1, 2, 3, 4, 5, 6].map(n => {
+                                            const itemKey = 'skillItem' + n, ptsKey = 'skillPts' + n;
+                                            const curItem = currentStudent[itemKey] || '';
+                                            const curPts = currentStudent[ptsKey] || 0;
+                                            const opts = (curItem && !SKILL_OPTIONS.includes(curItem)) ? [...SKILL_OPTIONS, curItem] : SKILL_OPTIONS;
+                                            return e('div', { key: n, className: "bg-white p-2 rounded-lg border border-green-100 text-center shadow-sm" },
+                                                e('select', { value: curItem, onChange: (evt) => updateStudentValue(currentStudent.id, itemKey, evt.target.value), className: "w-full bg-slate-100 border border-slate-200 rounded px-1 py-0.5 text-[10px] font-bold text-slate-600 mb-1" },
+                                                    e('option', { value: "" }, "選擇項目"),
+                                                    opts.map(o => e('option', { key: o, value: o }, o))
+                                                ),
+                                                e('div', { className: "flex items-center gap-1 justify-center" },
+                                                    e('button', { onClick: () => updateStudentValue(currentStudent.id, ptsKey, curPts - 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "-"),
+                                                    e('input', { type: "number", min: "0", max: String(SKILL_MAX_PER_SLOT), value: curPts, onChange: (evt) => updateStudentValue(currentStudent.id, ptsKey, evt.target.value), className: "w-9 text-center text-xs font-bold py-0.5 border-b focus:outline-none" }),
+                                                    e('button', { onClick: () => updateStudentValue(currentStudent.id, ptsKey, curPts + 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "+")
+                                                )
+                                            );
+                                        })
                                     )
                                 )
                             ),
@@ -1451,7 +1494,7 @@
                                                 e('div', { className: "flex justify-between items-center text-teal-200 font-bold" }, e('span', null, "DSE體能加總 (最高20分):"), e('span', null, `${studentScores?.dseTotalFitness}分`))
                                             )
                                         ),
-                                        e('div', { className: "flex justify-between items-center" }, e('span', { className: "text-emerald-200 flex items-center gap-1" }, e(Icon, { name: "crown", className: "w-3.5 h-3.5 text-emerald-400" }), " 專項運動技能:"), e('span', { className: "font-bold text-white" }, `${studentScores?.skill} / 20`))
+                                        e('div', { className: "flex justify-between items-center" }, e('span', { className: "text-emerald-200 flex items-center gap-1" }, e(Icon, { name: "crown", className: "w-3.5 h-3.5 text-emerald-400" }), " 專項運動技能:"), e('span', { className: "font-bold text-white" }, `${studentScores?.skill} / ${SKILL_TOTAL_CAP}`))
                                     )
                                 ),
                                 e('div', { className: "mt-4 pt-4 border-t border-white/10 flex items-center justify-between" },
@@ -1470,7 +1513,7 @@
                                     e('tr', { className: "bg-emerald-50 border-b border-emerald-100 text-[10px] font-bold text-emerald-800 uppercase tracking-wider text-center" },
                                         e('th', { className: "p-2.5 w-14" }, "班別"), e('th', { className: "p-2.5 w-14" }, "學號"), e('th', { className: "p-2.5 text-left w-24" }, "姓名"), e('th', { className: "p-2.5 w-14" }, "性別"), e('th', { className: "p-2.5 w-20" }, "課程分類"), e('th', { className: "p-2.5 w-16" }, "出席(20)"), e('th', { className: "p-2.5 w-20" }, "學習態度"), e('th', { className: "p-2.5 w-16" }, "身高(cm)"), e('th', { className: "p-2.5 w-16" }, "體重(kg)"), e('th', { className: "p-2.5 w-14" }, "BMI"),
                                         e('th', { className: "p-2.5" }, "體能測試細項指標 (支援直接手動輸入，計分常模即時聯動)"),
-                                        e('th', { className: "p-2.5 w-16" }, "籃球(9)"), e('th', { className: "p-2.5 w-16" }, "跳舞(11)"), e('th', { className: "p-2.5 w-16" }, "其他"), e('th', { className: "p-2.5 w-20" }, "總分(100)"), e('th', { className: "p-2.5 w-16" }, "等第"), e('th', { className: "p-2.5 w-12" }, "操作")
+                                        e('th', { className: "p-2.5" }, "專項運動技能 (項目可選，每格最高20分)"), e('th', { className: "p-2.5 w-20" }, "總分(100)"), e('th', { className: "p-2.5 w-16" }, "等第"), e('th', { className: "p-2.5 w-12" }, "操作")
                                     )
                                 ),
                                 e('tbody', { className: "divide-y divide-slate-100 text-xs font-medium text-center" },
@@ -1491,7 +1534,7 @@
                                         const dseRun1609 = isDse ? calculateDseRun1609Score(student.gender, student.dseRun1609Raw || 0) : 0;
                                         const dseSitReach = isDse ? calculateDseSitReachScore(student.gender, student.dseSitReachRaw || 0) : 0;
 
-                                        const skillScore = Math.min(20, (student.basketball || 0) + (student.dance || 0) + (student.extraSkill || 0));
+                                        const skillScore = calcSkillTotal(student);
                                         
                                         const fitnessTotal = isDse ? (dseSitUp + dsePullUp + dseRun1609 + dseSitReach) : (sitUpScore + pushUpScore + runScore + sitReachScore + run1000Score);
                                         const rawTotal = student.attendance + conductScore + fitnessTotal + skillScore;
@@ -1576,9 +1619,22 @@
                                                 )
                                             ),
 
-                                            e('td', { className: "p-1.5" }, e('input', { type: "number", min: "0", max: "9", value: student.basketball, onChange: (evt) => updateStudentValue(student.id, 'basketball', evt.target.value), className: "w-8 text-center py-0.5 border border-transparent hover:border-emerald-300 focus:border-emerald-500 focus:bg-white rounded font-bold" })),
-                                            e('td', { className: "p-1.5" }, e('input', { type: "number", min: "0", max: "11", value: student.dance, onChange: (evt) => updateStudentValue(student.id, 'dance', evt.target.value), className: "w-8 text-center py-0.5 border border-transparent hover:border-emerald-300 focus:border-emerald-500 focus:bg-white rounded font-bold" })),
-                                            e('td', { className: "p-1.5" }, e('input', { type: "number", min: "0", value: student.extraSkill || 0, onChange: (evt) => updateStudentValue(student.id, 'extraSkill', evt.target.value), className: "w-8 text-center py-0.5 border border-transparent hover:border-emerald-300 focus:border-emerald-500 focus:bg-white rounded font-bold" })),
+                                            e('td', { className: "p-1.5 text-[11px]" },
+                                                e('div', { className: "grid grid-cols-3 gap-1 justify-items-center" },
+                                                    [1, 2, 3, 4, 5, 6].map(n => {
+                                                        const itemKey = 'skillItem' + n, ptsKey = 'skillPts' + n;
+                                                        const curItem = student[itemKey] || '';
+                                                        const opts = (curItem && !SKILL_OPTIONS.includes(curItem)) ? [...SKILL_OPTIONS, curItem] : SKILL_OPTIONS;
+                                                        return e('div', { key: n, className: "flex items-center bg-emerald-50 border border-emerald-100 rounded px-1 py-0.5" },
+                                                            e('select', { value: curItem, onChange: (evt) => updateStudentValue(student.id, itemKey, evt.target.value), className: "w-14 bg-transparent text-[9px] font-bold text-slate-500 focus:outline-none" },
+                                                                e('option', { value: "" }, "項目"),
+                                                                opts.map(o => e('option', { key: o, value: o }, o))
+                                                            ),
+                                                            e('input', { type: "number", min: "0", max: String(SKILL_MAX_PER_SLOT), value: student[ptsKey] || "", onChange: (evt) => updateStudentValue(student.id, ptsKey, evt.target.value), className: "w-7 text-center bg-transparent font-bold focus:outline-none focus:bg-white" })
+                                                        );
+                                                    })
+                                                )
+                                            ),
                                             e('td', { className: "p-1.5 font-bold text-emerald-700 text-sm" }, total100),
                                             e('td', { className: "p-1.5" }, e('span', { className: `inline-block px-2 py-0.5 rounded-md text-[10px] font-black ${grade === 'A' ? 'bg-emerald-100 text-emerald-800' : grade === 'B' ? 'bg-blue-100 text-blue-800' : grade === 'C' ? 'bg-amber-100 text-amber-800' : grade === 'D' ? 'bg-orange-100 text-orange-800' : 'bg-rose-100 text-rose-800'}` }, grade)),
                                             e('td', { className: "p-1.5" }, e('button', { onClick: () => handleDeleteStudent(student.id, student.name), className: "p-1 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded transition-all" }, e(Icon, { name: "trash-2", className: "w-3.5 h-3.5" })))
