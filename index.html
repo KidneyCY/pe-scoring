@@ -67,7 +67,7 @@
         const SKILL_SLOTS = 6;
         const SKILL_MAX_PER_SLOT = 20;   // 每一格最高分
         const SKILL_TOTAL_CAP = SKILL_SLOTS * SKILL_MAX_PER_SLOT;   // 專項技能總分上限：6 格 × 20 分 = 120 (如要限制，改成想要的數字)
-        const SKILL_OPTIONS = ["籃球", "手球", "排球", "足球", "羽毛球", "乒乓球", "跳舞", "跳高", "跳遠", "標槍", "鐵餅", "鉛球", "體操", "其他"];
+        const SKILL_OPTIONS = ["籃球", "排球", "足球", "羽毛球", "乒乓球", "跳舞", "田徑", "游泳", "體操", "其他"];
         const EMPTY_SKILLS = { skillItem1: "", skillPts1: 0, skillItem2: "", skillPts2: 0, skillItem3: "", skillPts3: 0, skillItem4: "", skillPts4: 0, skillItem5: "", skillPts5: 0, skillItem6: "", skillPts6: 0 };
 
         const calcSkillTotal = (s) => {
@@ -281,7 +281,6 @@
             const [dirty, setDirty] = useState(() => safeLocalStorage.getItem('pe_dirty_v1', {}));
             const dirtyRef = useRef(dirty);
             const importColsRef = useRef({});
-            const baseRef = useRef({});   // 最近一次從雲端讀到的資料，用來判斷「本機哪些欄位真的跟雲端不同」
             useEffect(() => { dirtyRef.current = dirty; safeLocalStorage.setItem('pe_dirty_v1', dirty); }, [dirty]);
 
             // 匯出篩選控制
@@ -332,8 +331,7 @@
                 return () => window.removeEventListener('keydown', handleKeyDown);
             }, [isAuthenticated]);
 
-            const loadDataFromCloud = async (opts) => {
-                const silent = opts && opts.silent === true;
+            const loadDataFromCloud = async () => {
                 const targetUrl = cloudUrl || DEFAULT_CLOUD_URL;
                 if (!targetUrl || !targetUrl.startsWith('https://script.google.com/')) {
                     setCloudConnectionStatus("failed");
@@ -351,7 +349,6 @@
                     const result = await response.json();
                     if (result.status === 'success') {
                         if (result.data && result.data.length > 0) {
-                            result.data.forEach(d => { baseRef.current[d.id] = { ...normalizeStudent(d) }; });
                             const localMap = {};
                             students.forEach(s => { localMap[s.id] = s; });
                             const dirtyNow = dirtyRef.current || {};
@@ -394,7 +391,7 @@
                         }
                         setCloudConnectionStatus("success");
                         setHasUnsavedConfig(false);
-                        if (!silent) showToast("☁️ 雙向自動同步成功！已成功加載雲端自訂常模與分數標準。");
+                        showToast("☁️ 雙向自動同步成功！已成功加載雲端自訂常模與分數標準。");
                     } else {
                         throw new Error(result.message || 'Apps Script 無效格式');
                     }
@@ -723,21 +720,6 @@
                 }
                 setIsSyncing(true);
                 const sentDirty = JSON.parse(JSON.stringify(dirty));
-                // 比對「本機值」與「最近一次從雲端讀到的值」：沒有真正改動的欄位 (包括殘留的舊記錄) 一律不上傳
-                const sameVal = (a, b) => {
-                    const na = (a === undefined || a === null || a === '') ? '' : String(a);
-                    const nb = (b === undefined || b === null || b === '') ? '' : String(b);
-                    if (na === nb) return true;
-                    const fa = parseFloat(na), fb = parseFloat(nb);
-                    if (!isNaN(fa) && !isNaN(fb)) return fa === fb;
-                    return (na === '' && nb === '0') || (na === '0' && nb === '');
-                };
-                const dirtyFieldsOf = (student) => {
-                    let df = Object.keys(dirty[student.id] || {});
-                    const base = baseRef.current[student.id];
-                    if (base) df = df.filter(k => !sameVal(student[k], base[k]));
-                    return df;
-                };
                 try {
                     const payload = students.map(student => {
                         const conductScore = CONDUCT_RULES[student.conductGrade] || 0;
@@ -768,7 +750,7 @@
 
                         return {
                             id: student.id,
-                            dirtyFields: dirtyFieldsOf(student),
+                            dirtyFields: Object.keys(dirty[student.id] || {}),
                             class: student.class,
                             number: student.number,
                             name: student.name,
@@ -843,10 +825,9 @@
                             });
                             return n;
                         });
-                        const uploadFieldCount = payload.reduce((a, p) => a + (p.dirtyFields ? p.dirtyFields.length : 0), 0);
-                        showToast(`☁️ 同步成功！本次只上傳你修改過的 ${uploadFieldCount} 個欄位 (更新 ${result.count !== undefined ? result.count : '-'} 位學生)，其他資料保持雲端內容。`);
+                        showToast(`☁️ 雙向雲端同步成功！本次更新 ${result.count !== undefined ? result.count : '-'} 位學生的成績，常模基準已備份。`);
                         // 同步成功後自動讀回雲端，讓畫面立即顯示其他老師已輸入的成績 (本機未同步的輸入不會被覆蓋)
-                        await loadDataFromCloud({ silent: true });
+                        await loadDataFromCloud();
                     } else {
                         throw new Error(result.message || 'Apps Script 處理異常');
                     }
