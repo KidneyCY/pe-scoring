@@ -105,8 +105,6 @@
             }
         };
 
-        const getAuthPwd = () => safeSessionStorage.getItem('pe_app_pwd', '');
-
         // 預設學生名單 (已將所有成績、出席率及 DSE 數據完全重置為 0)
         const DEFAULT_STUDENTS = [];
 
@@ -196,7 +194,7 @@
         }
 
         function App() {
-            const [isAuthenticated, setIsAuthenticated] = useState(() => safeSessionStorage.getItem('pe_app_pwd', '') !== '');
+            const [isAuthenticated, setIsAuthenticated] = useState(() => safeSessionStorage.getItem('pe_app_authenticated', 'false') === 'true');
             const [passwordInput, setPasswordInput] = useState('');
             const [authError, setAuthError] = useState('');
             const [showPassword, setShowPassword] = useState(false);
@@ -270,48 +268,15 @@
                 pwdRef.current = passwordInput;
             }, [passwordInput]);
 
-            const loggingInRef = useRef(false);
-
-            const forceLogout = (msg) => {
-                safeSessionStorage.setItem('pe_app_pwd', '');
-                setIsAuthenticated(false);
-                setPasswordInput('');
-                setAuthError(msg || '登入已失效，請重新輸入密碼。');
-            };
-
-            // 🔐 密碼由雲端 Apps Script 驗證，網頁程式碼內不含任何密碼
-            async function handleLoginAttempt(pwd) {
-                if (!pwd || loggingInRef.current) return;
-                loggingInRef.current = true;
-                setAuthError('驗證中...');
-                try {
-                    const targetUrl = cloudUrl || DEFAULT_CLOUD_URL;
-                    const response = await fetch(targetUrl, {
-                        method: 'POST',
-                        mode: 'cors',
-                        redirect: 'follow',
-                        body: JSON.stringify({ action: 'login', password: pwd })
-                    });
-                    const result = await response.json();
-                    if (result.status === 'success') {
-                        safeSessionStorage.setItem('pe_app_pwd', pwd);
-                        setIsAuthenticated(true);
-                        setAuthError('');
-                        showToast("🔓 系統安全解鎖！");
-                    } else if (result.status === 'locked') {
-                        setAuthError('錯誤次數過多，已暫時鎖定，請 10 分鐘後再試。');
-                        setPasswordInput('');
-                    } else if (result.status === 'nopassword') {
-                        setAuthError('雲端尚未設定密碼，請先在 Apps Script 設定 APP_PASSWORD。');
-                        setPasswordInput('');
-                    } else {
-                        setAuthError('密碼錯誤，請重新輸入。');
-                        setPasswordInput('');
-                    }
-                } catch (err) {
-                    setAuthError('無法連線至雲端驗證，請檢查網絡後再試。');
-                } finally {
-                    loggingInRef.current = false;
+            function handleLoginAttempt(pwd) {
+                if (pwd === '60706759') {
+                    setIsAuthenticated(true);
+                    safeSessionStorage.setItem('pe_app_authenticated', 'true');
+                    setAuthError('');
+                    showToast("🔓 系統安全解鎖！");
+                } else {
+                    setAuthError('密碼錯誤，請重新輸入。');
+                    setPasswordInput('');
                 }
             }
 
@@ -346,14 +311,10 @@
                         method: 'POST',
                         mode: 'cors',
                         redirect: 'follow',
-                        body: JSON.stringify({ action: 'read', password: getAuthPwd() })
+                        body: JSON.stringify({ action: 'read' })
                     });
                     if (!response.ok) throw new Error(`HTTP 狀態碼錯誤: ${response.status}`);
                     const result = await response.json();
-                    if (result.status === 'unauthorized' || result.status === 'locked' || result.status === 'nopassword') {
-                        forceLogout();
-                        return;
-                    }
                     if (result.status === 'success') {
                         if (result.data && result.data.length > 0) {
                             const localMap = {};
@@ -805,7 +766,7 @@
                         mode: 'cors',
                         redirect: 'follow', 
                         body: JSON.stringify({ 
-                            action: 'sync', password: getAuthPwd(), 
+                            action: 'sync', 
                             data: payload,
                             config: configPayload 
                         })
@@ -813,10 +774,6 @@
 
                     if (!response.ok) throw new Error(`伺服器錯誤: ${response.status}`);
                     const result = await response.json();
-                    if (result.status === 'unauthorized' || result.status === 'locked' || result.status === 'nopassword') {
-                        forceLogout();
-                        return;
-                    }
                     if (result.status === 'success') {
                         setHasUnsavedConfig(false);
                         setCloudConnectionStatus("success");
@@ -1242,7 +1199,7 @@
                             e('button', { onClick: () => setAddModalOpen(true), className: "flex items-center gap-1 px-2.5 py-1.5 bg-green-500 hover:bg-green-400 text-white font-bold rounded-lg transition-all shadow-sm shrink-0" },
                                 e(Icon, { name: "user-plus", className: "w-3.5 h-3.5" }), " 新增學生"
                             ),
-                            e('button', { onClick: () => { setIsAuthenticated(false); safeSessionStorage.setItem('pe_app_authenticated', 'false'); safeSessionStorage.setItem('pe_app_pwd', ''); }, className: "p-1.5 bg-emerald-900 hover:bg-emerald-700 text-white rounded-lg transition-all shrink-0", title: "登出鎖定" },
+                            e('button', { onClick: () => { setIsAuthenticated(false); safeSessionStorage.setItem('pe_app_authenticated', 'false'); }, className: "p-1.5 bg-emerald-900 hover:bg-emerald-700 text-white rounded-lg transition-all shrink-0", title: "登出鎖定" },
                                 e(Icon, { name: "lock", className: "w-4 h-4" })
                             )
                         )
