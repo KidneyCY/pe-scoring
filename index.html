@@ -63,37 +63,6 @@
             return (ww / Math.pow(hh / 100, 2)).toFixed(1);
         };
 
-        // ==================== 專項運動技能 (6 格，項目可選) ====================
-        const SKILL_SLOTS = 6;
-        const SKILL_MAX_PER_SLOT = 20;   // 每一格最高分
-        const SKILL_TOTAL_CAP = SKILL_SLOTS * SKILL_MAX_PER_SLOT;   // 專項技能總分上限：6 格 × 20 分 = 120 (如要限制，改成想要的數字)
-        const SKILL_OPTIONS = ["籃球", "排球", "足球", "羽毛球", "乒乓球", "跳舞", "田徑", "游泳", "體操", "其他"];
-        const EMPTY_SKILLS = { skillItem1: "", skillPts1: 0, skillItem2: "", skillPts2: 0, skillItem3: "", skillPts3: 0, skillItem4: "", skillPts4: 0, skillItem5: "", skillPts5: 0, skillItem6: "", skillPts6: 0 };
-
-        const calcSkillTotal = (s) => {
-            let t = 0;
-            for (let i = 1; i <= SKILL_SLOTS; i++) t += parseInt(s['skillPts' + i]) || 0;
-            return Math.min(SKILL_TOTAL_CAP, t);
-        };
-
-        // 舊資料 (籃球 / 跳舞 / 其他) 自動轉入新的 6 格，不會丟失原有分數
-        const normalizeStudent = (s) => {
-            if (!s) return s;
-            const out = { ...s };
-            if (out.skillItem1 === undefined && out.skillPts1 === undefined) {
-                [['籃球', out.basketball], ['跳舞', out.dance], ['其他', out.extraSkill]].forEach(([name, v], i) => {
-                    const pts = Math.min(SKILL_MAX_PER_SLOT, Math.max(0, parseInt(v) || 0));
-                    out['skillItem' + (i + 1)] = pts > 0 ? name : '';
-                    out['skillPts' + (i + 1)] = pts;
-                });
-            }
-            for (let i = 1; i <= SKILL_SLOTS; i++) {
-                if (out['skillItem' + i] === undefined) out['skillItem' + i] = '';
-                if (out['skillPts' + i] === undefined) out['skillPts' + i] = 0;
-            }
-            return out;
-        };
-
         // ==================== ULTRA-SAFE STORAGE SANDBOX WRAPPERS ====================
         const memoryStorage = {};
         const safeLocalStorage = {
@@ -135,6 +104,8 @@
                 }
             }
         };
+
+        const getAuthPwd = () => safeSessionStorage.getItem('pe_app_pwd', '');
 
         // 預設學生名單 (已將所有成績、出席率及 DSE 數據完全重置為 0)
         const DEFAULT_STUDENTS = [];
@@ -225,13 +196,13 @@
         }
 
         function App() {
-            const [isAuthenticated, setIsAuthenticated] = useState(() => safeSessionStorage.getItem('pe_app_authenticated', 'false') === 'true');
+            const [isAuthenticated, setIsAuthenticated] = useState(() => safeSessionStorage.getItem('pe_app_pwd', '') !== '');
             const [passwordInput, setPasswordInput] = useState('');
             const [authError, setAuthError] = useState('');
             const [showPassword, setShowPassword] = useState(false);
 
             // 💡 關鍵更動：所有 LocalStorage 金鑰從 v16_force 全部升級到 v17_clear 以強制重寫並乾淨初始！
-            const [students, setStudents] = useState(() => (safeLocalStorage.getItem('pe_students_data_v17_clear', DEFAULT_STUDENTS) || []).map(normalizeStudent));
+            const [students, setStudents] = useState(() => safeLocalStorage.getItem('pe_students_data_v17_clear', DEFAULT_STUDENTS));
             const [activeTab, setActiveTab] = useState('mobile'); 
             const [searchQuery, setSearchQuery] = useState('');
             const [selectedClass, setSelectedClass] = useState('All');
@@ -272,7 +243,7 @@
             const [addModalOpen, setAddModalOpen] = useState(false);
             
             // 💡 預設一千米跑 (run1000Raw) 和 DSE 1609米跑 (dseRun1609Raw) 為 0 
-            const [newStudent, setNewStudent] = useState({ class: "2A", number: "", name: "", gender: "M", isDsePe: false, attendance: 0, conductGrade: "B", sitUpsRaw: 0, pushUpsRaw: 0, runLapsRaw: 0, sitReachRaw: 0, run1000Raw: 0, dseSitUpsRaw: 0, dsePullUpsRaw: 0, dseRun1609Raw: 0, dseSitReachRaw: 0, ...EMPTY_SKILLS });
+            const [newStudent, setNewStudent] = useState({ class: "2A", number: "", name: "", gender: "M", isDsePe: false, attendance: 0, conductGrade: "B", sitUpsRaw: 0, pushUpsRaw: 0, runLapsRaw: 0, sitReachRaw: 0, run1000Raw: 0, dseSitUpsRaw: 0, dsePullUpsRaw: 0, dseRun1609Raw: 0, dseSitReachRaw: 0, basketball: 0, dance: 0, extraSkill: 0 });
             const [confirmModal, setConfirmModal] = useState(null);
 
             const [hasUnsavedConfig, setHasUnsavedConfig] = useState(false);
@@ -280,8 +251,6 @@
             // 🖊 本機「尚未同步」的修改欄位：同步時只上傳這些欄位，避免覆蓋其他老師已輸入的成績
             const [dirty, setDirty] = useState(() => safeLocalStorage.getItem('pe_dirty_v1', {}));
             const dirtyRef = useRef(dirty);
-            const importColsRef = useRef({});
-            const baseRef = useRef({});   // 最近一次從雲端讀到的資料，用來判斷「本機哪些欄位真的跟雲端不同」
             useEffect(() => { dirtyRef.current = dirty; safeLocalStorage.setItem('pe_dirty_v1', dirty); }, [dirty]);
 
             // 匯出篩選控制
@@ -301,15 +270,48 @@
                 pwdRef.current = passwordInput;
             }, [passwordInput]);
 
-            function handleLoginAttempt(pwd) {
-                if (pwd === '60706759') {
-                    setIsAuthenticated(true);
-                    safeSessionStorage.setItem('pe_app_authenticated', 'true');
-                    setAuthError('');
-                    showToast("🔓 系統安全解鎖！");
-                } else {
-                    setAuthError('密碼錯誤，請重新輸入。');
-                    setPasswordInput('');
+            const loggingInRef = useRef(false);
+
+            const forceLogout = (msg) => {
+                safeSessionStorage.setItem('pe_app_pwd', '');
+                setIsAuthenticated(false);
+                setPasswordInput('');
+                setAuthError(msg || '登入已失效，請重新輸入密碼。');
+            };
+
+            // 🔐 密碼由雲端 Apps Script 驗證，網頁程式碼內不含任何密碼
+            async function handleLoginAttempt(pwd) {
+                if (!pwd || loggingInRef.current) return;
+                loggingInRef.current = true;
+                setAuthError('驗證中...');
+                try {
+                    const targetUrl = cloudUrl || DEFAULT_CLOUD_URL;
+                    const response = await fetch(targetUrl, {
+                        method: 'POST',
+                        mode: 'cors',
+                        redirect: 'follow',
+                        body: JSON.stringify({ action: 'login', password: pwd })
+                    });
+                    const result = await response.json();
+                    if (result.status === 'success') {
+                        safeSessionStorage.setItem('pe_app_pwd', pwd);
+                        setIsAuthenticated(true);
+                        setAuthError('');
+                        showToast("🔓 系統安全解鎖！");
+                    } else if (result.status === 'locked') {
+                        setAuthError('錯誤次數過多，已暫時鎖定，請 10 分鐘後再試。');
+                        setPasswordInput('');
+                    } else if (result.status === 'nopassword') {
+                        setAuthError('雲端尚未設定密碼，請先在 Apps Script 設定 APP_PASSWORD。');
+                        setPasswordInput('');
+                    } else {
+                        setAuthError('密碼錯誤，請重新輸入。');
+                        setPasswordInput('');
+                    }
+                } catch (err) {
+                    setAuthError('無法連線至雲端驗證，請檢查網絡後再試。');
+                } finally {
+                    loggingInRef.current = false;
                 }
             }
 
@@ -332,8 +334,7 @@
                 return () => window.removeEventListener('keydown', handleKeyDown);
             }, [isAuthenticated]);
 
-            const loadDataFromCloud = async (opts) => {
-                const silent = opts && opts.silent === true;
+            const loadDataFromCloud = async () => {
                 const targetUrl = cloudUrl || DEFAULT_CLOUD_URL;
                 if (!targetUrl || !targetUrl.startsWith('https://script.google.com/')) {
                     setCloudConnectionStatus("failed");
@@ -345,13 +346,16 @@
                         method: 'POST',
                         mode: 'cors',
                         redirect: 'follow',
-                        body: JSON.stringify({ action: 'read' })
+                        body: JSON.stringify({ action: 'read', password: getAuthPwd() })
                     });
                     if (!response.ok) throw new Error(`HTTP 狀態碼錯誤: ${response.status}`);
                     const result = await response.json();
+                    if (result.status === 'unauthorized' || result.status === 'locked' || result.status === 'nopassword') {
+                        forceLogout();
+                        return;
+                    }
                     if (result.status === 'success') {
                         if (result.data && result.data.length > 0) {
-                            result.data.forEach(d => { baseRef.current[d.id] = { ...normalizeStudent(d) }; });
                             const localMap = {};
                             students.forEach(s => { localMap[s.id] = s; });
                             const dirtyNow = dirtyRef.current || {};
@@ -370,9 +374,8 @@
                             });
                             // 本機新增、尚未同步到雲端的學生也保留
                             students.forEach(s => { if (!cloudIds[s.id] && dirtyNow[s.id]) merged.push(s); });
-                            const normalizedMerged = merged.map(normalizeStudent);
-                            setStudents(normalizedMerged);
-                            forceSaveData(normalizedMerged);
+                            setStudents(merged);
+                            forceSaveData(merged);
                         }
                         if (result.config) {
                             const c = result.config;
@@ -394,7 +397,7 @@
                         }
                         setCloudConnectionStatus("success");
                         setHasUnsavedConfig(false);
-                        if (!silent) showToast("☁️ 雙向自動同步成功！已成功加載雲端自訂常模與分數標準。");
+                        showToast("☁️ 雙向自動同步成功！已成功加載雲端自訂常模與分數標準。");
                     } else {
                         throw new Error(result.message || 'Apps Script 無效格式');
                     }
@@ -612,8 +615,6 @@
 
                             if (field === 'height') updated.height = Math.min(250, Math.max(0, Math.round((parseFloat(val) || 0) * 10) / 10));
                             if (field === 'weight') updated.weight = Math.min(300, Math.max(0, Math.round((parseFloat(val) || 0) * 10) / 10));
-                            if (/^skillPts[1-6]$/.test(field)) updated[field] = Math.min(SKILL_MAX_PER_SLOT, Math.max(0, parseInt(val) || 0));
-                            if (/^skillItem[1-6]$/.test(field)) updated[field] = String(val || '');
                             if (field === 'basketball') updated.basketball = Math.min(9, Math.max(0, parseInt(val) || 0));
                             if (field === 'dance') updated.dance = Math.min(11, Math.max(0, parseInt(val) || 0));
                             if (field === 'extraSkill') updated.extraSkill = Math.min(20, Math.max(0, parseInt(val) || 0));
@@ -645,7 +646,7 @@
                 const dseSitReach = calculateDseSitReachScore(currentStudent.gender, currentStudent.dseSitReachRaw || 0);
                 const dseTotalFitness = dseSitUp + dsePullUp + dseRun1609 + dseSitReach;
 
-                const skill = calcSkillTotal(currentStudent);
+                const skill = Math.min(20, (currentStudent.basketball || 0) + (currentStudent.dance || 0) + (currentStudent.extraSkill || 0));
                 
                 // 區分常規(100分) 或 DSE(20分) 體能
                 const fitnessTotal = currentStudent.isDsePe ? dseTotalFitness : (sitUp + pushUp + runLaps + sitReach + run1000);
@@ -676,7 +677,7 @@
                 }
 
                 let csvContent = "data:text/csv;charset=utf-8,\uFEFF";
-                csvContent += "班別,學號,姓名,性別,課程分類,出席次數(20),學習態度操守,身高(cm),體重(kg),BMI,SitUp次數,SitUp得分,掌上壓次數,掌上壓得分,九分鐘跑圈數,九分鐘跑得分,坐地前伸cm,坐地前伸得分,一千米秒數,一千米得分,DSE-SitUp次數,DSE-SitUp得分,DSE-引體上升次/秒,DSE-引體得分,DSE-1609米跑秒數,DSE-1609得分,DSE-坐地前伸cm,DSE-坐地得分,專項1項目,專項1分數,專項2項目,專項2分數,專項3項目,專項3分數,專項4項目,專項4分數,專項5項目,專項5分數,專項6項目,專項6分數,技能總分,原始總和,最終總分(100),等級\r\n";
+                csvContent += "班別,學號,姓名,性別,課程分類,出席次數(20),學習態度操守,身高(cm),體重(kg),BMI,SitUp次數,SitUp得分,掌上壓次數,掌上壓得分,九分鐘跑圈數,九分鐘跑得分,坐地前伸cm,坐地前伸得分,一千米秒數,一千米得分,DSE-SitUp次數,DSE-SitUp得分,DSE-引體上升次/秒,DSE-引體得分,DSE-1609米跑秒數,DSE-1609得分,DSE-坐地前伸cm,DSE-坐地得分,籃球(9),跳舞(11),其他項目,技能總分(20),原始總和,最終總分(100),等級\r\n";
                 
                 targetList.forEach(s => {
                     const conductScore = CONDUCT_RULES[s.conductGrade] || 0;
@@ -693,15 +694,14 @@
                     const dseRun1609 = isDse ? calculateDseRun1609Score(s.gender, s.dseRun1609Raw || 0) : "";
                     const dseSitReach = isDse ? calculateDseSitReachScore(s.gender, s.dseSitReachRaw || 0) : "";
 
-                    const skillScore = calcSkillTotal(s);
-                    const skillCells = [1, 2, 3, 4, 5, 6].map(n => `${s['skillItem' + n] || ''},${s['skillPts' + n] || 0}`).join(',');
+                    const skillScore = Math.min(20, (s.basketball || 0) + (s.dance || 0) + (s.extraSkill || 0));
                     
                     const fitnessTotal = isDse ? (Number(dseSitUp) + Number(dsePullUp) + Number(dseRun1609) + Number(dseSitReach)) : (Number(sitUpScore) + Number(pushUpScore) + Number(runScore) + Number(sitReachScore) + Number(run1000Score));
                     const rawTotal = s.attendance + conductScore + fitnessTotal + skillScore;
                     const total100 = Math.min(100, rawTotal);
                     const grade = calculateGrade(total100);
 
-                    csvContent += `${s.class},${s.number},${s.name},${s.gender},${isDse ? 'DSE' : '常規'},${s.attendance},${s.conductGrade}(${conductScore}),${s.height || ""},${s.weight || ""},${calcBMI(s.height, s.weight)},${isDse ? "" : s.sitUpsRaw},${sitUpScore},${isDse ? "" : (s.pushUpsRaw || 0)},${pushUpScore},${isDse ? "" : s.runLapsRaw},${runScore},${isDse ? "" : (s.sitReachRaw || 0)},${sitReachScore},${isDse ? "" : (s.run1000Raw || 0)},${run1000Score},${isDse ? (s.dseSitUpsRaw || 0) : ""},${dseSitUp},${isDse ? (s.dsePullUpsRaw || 0) : ""},${dsePullUp},${isDse ? (s.dseRun1609Raw || 0) : ""},${dseRun1609},${isDse ? (s.dseSitReachRaw || 0) : ""},${dseSitReach},${skillCells},${skillScore},${rawTotal},${total100},${grade}\r\n`;
+                    csvContent += `${s.class},${s.number},${s.name},${s.gender},${isDse ? 'DSE' : '常規'},${s.attendance},${s.conductGrade}(${conductScore}),${s.height || ""},${s.weight || ""},${calcBMI(s.height, s.weight)},${isDse ? "" : s.sitUpsRaw},${sitUpScore},${isDse ? "" : (s.pushUpsRaw || 0)},${pushUpScore},${isDse ? "" : s.runLapsRaw},${runScore},${isDse ? "" : (s.sitReachRaw || 0)},${sitReachScore},${isDse ? "" : (s.run1000Raw || 0)},${run1000Score},${isDse ? (s.dseSitUpsRaw || 0) : ""},${dseSitUp},${isDse ? (s.dsePullUpsRaw || 0) : ""},${dsePullUp},${isDse ? (s.dseRun1609Raw || 0) : ""},${dseRun1609},${isDse ? (s.dseSitReachRaw || 0) : ""},${dseSitReach},${s.basketball},${s.dance},${s.extraSkill || 0},${skillScore},${rawTotal},${total100},${grade}\r\n`;
                 });
 
                 const encodedUri = encodeURI(csvContent);
@@ -723,21 +723,6 @@
                 }
                 setIsSyncing(true);
                 const sentDirty = JSON.parse(JSON.stringify(dirty));
-                // 比對「本機值」與「最近一次從雲端讀到的值」：沒有真正改動的欄位 (包括殘留的舊記錄) 一律不上傳
-                const sameVal = (a, b) => {
-                    const na = (a === undefined || a === null || a === '') ? '' : String(a);
-                    const nb = (b === undefined || b === null || b === '') ? '' : String(b);
-                    if (na === nb) return true;
-                    const fa = parseFloat(na), fb = parseFloat(nb);
-                    if (!isNaN(fa) && !isNaN(fb)) return fa === fb;
-                    return (na === '' && nb === '0') || (na === '0' && nb === '');
-                };
-                const dirtyFieldsOf = (student) => {
-                    let df = Object.keys(dirty[student.id] || {});
-                    const base = baseRef.current[student.id];
-                    if (base) df = df.filter(k => !sameVal(student[k], base[k]));
-                    return df;
-                };
                 try {
                     const payload = students.map(student => {
                         const conductScore = CONDUCT_RULES[student.conductGrade] || 0;
@@ -754,21 +739,16 @@
                         const dseRun1609 = isDse ? calculateDseRun1609Score(student.gender, student.dseRun1609Raw || 0) : "";
                         const dseSitReach = isDse ? calculateDseSitReachScore(student.gender, student.dseSitReachRaw || 0) : "";
 
-                        const skillScore = calcSkillTotal(student);
+                        const skillScore = Math.min(20, (student.basketball || 0) + (student.dance || 0) + (student.extraSkill || 0));
                         
                         const realFitnessTotal = isDse ? (Number(dseSitUp) + Number(dsePullUp) + Number(dseRun1609) + Number(dseSitReach)) : (Number(sitUpScore) + Number(pushUpScore) + Number(runScore) + Number(sitReachScore) + Number(run1000Score));
                         const rawTotal = student.attendance + conductScore + realFitnessTotal + skillScore;
                         const totalScore = Math.min(100, rawTotal); 
                         const grade = calculateGrade(totalScore);
-                        const skillPayload = {};
-                        for (let n = 1; n <= SKILL_SLOTS; n++) {
-                            skillPayload['skillItem' + n] = student['skillItem' + n] || '';
-                            skillPayload['skillPts' + n] = parseInt(student['skillPts' + n]) || 0;
-                        }
 
                         return {
                             id: student.id,
-                            dirtyFields: dirtyFieldsOf(student),
+                            dirtyFields: Object.keys(dirty[student.id] || {}),
                             class: student.class,
                             number: student.number,
                             name: student.name,
@@ -797,7 +777,9 @@
                             dseRun1609Score: dseRun1609,
                             dseSitReachRaw: isDse ? (student.dseSitReachRaw || 0) : "",
                             dseSitReachScore: dseSitReach,
-                            ...skillPayload,
+                            basketball: student.basketball,
+                            dance: student.dance,
+                            extraSkill: student.extraSkill || 0,
                             skillScore: skillScore,
                             totalScore: totalScore,
                             grade: grade
@@ -823,7 +805,7 @@
                         mode: 'cors',
                         redirect: 'follow', 
                         body: JSON.stringify({ 
-                            action: 'sync', 
+                            action: 'sync', password: getAuthPwd(), 
                             data: payload,
                             config: configPayload 
                         })
@@ -831,6 +813,10 @@
 
                     if (!response.ok) throw new Error(`伺服器錯誤: ${response.status}`);
                     const result = await response.json();
+                    if (result.status === 'unauthorized' || result.status === 'locked' || result.status === 'nopassword') {
+                        forceLogout();
+                        return;
+                    }
                     if (result.status === 'success') {
                         setHasUnsavedConfig(false);
                         setCloudConnectionStatus("success");
@@ -843,10 +829,7 @@
                             });
                             return n;
                         });
-                        const uploadFieldCount = payload.reduce((a, p) => a + (p.dirtyFields ? p.dirtyFields.length : 0), 0);
-                        showToast(`☁️ 同步成功！本次只上傳你修改過的 ${uploadFieldCount} 個欄位 (更新 ${result.count !== undefined ? result.count : '-'} 位學生)，其他資料保持雲端內容。`);
-                        // 同步成功後自動讀回雲端，讓畫面立即顯示其他老師已輸入的成績 (本機未同步的輸入不會被覆蓋)
-                        await loadDataFromCloud({ silent: true });
+                        showToast(`☁️ 雙向雲端同步成功！本次更新 ${result.count !== undefined ? result.count : '-'} 位學生的成績，常模基準已備份。`);
                     } else {
                         throw new Error(result.message || 'Apps Script 處理異常');
                     }
@@ -916,7 +899,6 @@
                             if (field) colIndices[field] = index;
                         });
 
-                        importColsRef.current = { ...colIndices };
                         if (colIndices.name === undefined) {
                             setImportError("找不到『姓名』欄位，請確認首行標題。");
                             setPreviewStudents([]);
@@ -962,7 +944,7 @@
                             const height = colIndices.height !== undefined ? parseFloat(row[colIndices.height]) || 0 : 0;
                             const weight = colIndices.weight !== undefined ? parseFloat(row[colIndices.weight]) || 0 : 0;
 
-                            parsedStudents.push(normalizeStudent({
+                            parsedStudents.push({
                                 id: Date.now() + idx, class: classVal, number: numberVal, name: studentName, gender: gender, isDsePe: isDsePe,
                                 attendance: Math.min(20, Math.max(0, isNaN(attendanceVal) ? 20 : attendanceVal)),
                                 conductGrade: CONDUCT_RULES[conductGrade] !== undefined ? conductGrade : "B",
@@ -982,7 +964,7 @@
                                 extraSkill: Math.min(20, Math.max(0, isNaN(extraSkill) ? 0 : extraSkill)),
                                 height: height,
                                 weight: weight
-                            }));
+                            });
                         });
 
                         if (parsedStudents.length === 0) {
@@ -1003,26 +985,11 @@
                 evt.target.value = null; 
             };
 
-            // 匯入時只標記「Excel 有這一欄、而且有填數值」的欄位為已修改，空白或 0 不會覆蓋雲端上別人輸入的成績
-            const getImportDirty = (s) => {
-                const cols = importColsRef.current || {};
-                const d = { name: true };
-                ['class', 'number', 'gender', 'isDsePe'].forEach(k => { if (cols[k] !== undefined) d[k] = true; });
-                ['attendance', 'sitUpsRaw', 'pushUpsRaw', 'runLapsRaw', 'sitReachRaw', 'run1000Raw', 'dseSitUpsRaw', 'dsePullUpsRaw', 'dseRun1609Raw', 'dseSitReachRaw', 'height', 'weight'].forEach(k => {
-                    if (cols[k] !== undefined && (parseFloat(s[k]) || 0) > 0) d[k] = true;
-                });
-                if (cols.conductGrade !== undefined && s.conductGrade) d.conductGrade = true;
-                [['basketball', 1], ['dance', 2], ['extraSkill', 3]].forEach(([k, n]) => {
-                    if (cols[k] !== undefined && (parseInt(s['skillPts' + n]) || 0) > 0) { d['skillPts' + n] = true; d['skillItem' + n] = true; }
-                });
-                return d;
-            };
-
             const confirmImport = () => {
                 if (previewStudents.length > 0) {
                     setStudents(previewStudents);
                     forceSaveData(previewStudents);
-                    setDirty(prev => { const n = { ...prev }; previewStudents.forEach(s => { n[s.id] = getImportDirty(s); }); return n; });
+                    setDirty(prev => { const n = { ...prev }; previewStudents.forEach(s => { n[s.id] = Object.keys(s).reduce((o, k) => { o[k] = true; return o; }, {}); }); return n; });
                     setCurrentMobileIndex(0);
                     setCurrentPage(1);
                     showToast(`✅ 成功導入 ${previewStudents.length} 筆學生資料！`);
@@ -1043,11 +1010,11 @@
                     class: String(newStudent.class).toUpperCase().trim()
                 };
                 const updatedList = [...students, created];
-                setDirty(prev => ({ ...prev, [created.id]: { class: true, number: true, name: true, gender: true, isDsePe: true, attendance: true, conductGrade: true } }));
+                setDirty(prev => ({ ...prev, [created.id]: Object.keys(created).reduce((o, k) => { o[k] = true; return o; }, {}) }));
                 setStudents(updatedList);
                 forceSaveData(updatedList);
                 setAddModalOpen(false);
-                setNewStudent({ class: "2A", number: "", name: "", gender: "M", isDsePe: false, attendance: 0, conductGrade: "B", sitUpsRaw: 0, pushUpsRaw: 0, runLapsRaw: 0, sitReachRaw: 0, run1000Raw: 0, dseSitUpsRaw: 0, dsePullUpsRaw: 0, dseRun1609Raw: 0, dseSitReachRaw: 0, ...EMPTY_SKILLS });
+                setNewStudent({ class: "2A", number: "", name: "", gender: "M", isDsePe: false, attendance: 0, conductGrade: "B", sitUpsRaw: 0, pushUpsRaw: 0, runLapsRaw: 0, sitReachRaw: 0, run1000Raw: 0, dseSitUpsRaw: 0, dsePullUpsRaw: 0, dseRun1609Raw: 0, dseSitReachRaw: 0, basketball: 0, dance: 0, extraSkill: 0 });
                 showToast(`➕ 已新增學生：${created.name}`);
             };
 
@@ -1255,7 +1222,7 @@
                             ),
                             e('div', { className: "min-w-0" },
                                 e('h1', { className: "text-sm sm:text-base md:text-lg font-bold tracking-wider text-white whitespace-nowrap truncate max-w-full" }, "中華基督會譚李麗芬紀念中學體育科登分系統"),
-                                e('p', { className: "text-[10px] font-bold text-emerald-200 tracking-wider truncate max-w-full uppercase" }, )
+                                e('p', { className: "text-[10px] font-bold text-emerald-200 tracking-wider truncate max-w-full uppercase" }, "體育科核心測評管理系統 v17 - 常規與DSE體能雙模隔離儲存版")
                             )
                         ),
                         e('div', { className: "flex flex-wrap items-center gap-2 w-full xl:w-auto justify-end text-xs" },
@@ -1275,7 +1242,7 @@
                             e('button', { onClick: () => setAddModalOpen(true), className: "flex items-center gap-1 px-2.5 py-1.5 bg-green-500 hover:bg-green-400 text-white font-bold rounded-lg transition-all shadow-sm shrink-0" },
                                 e(Icon, { name: "user-plus", className: "w-3.5 h-3.5" }), " 新增學生"
                             ),
-                            e('button', { onClick: () => { setIsAuthenticated(false); safeSessionStorage.setItem('pe_app_authenticated', 'false'); }, className: "p-1.5 bg-emerald-900 hover:bg-emerald-700 text-white rounded-lg transition-all shrink-0", title: "登出鎖定" },
+                            e('button', { onClick: () => { setIsAuthenticated(false); safeSessionStorage.setItem('pe_app_authenticated', 'false'); safeSessionStorage.setItem('pe_app_pwd', ''); }, className: "p-1.5 bg-emerald-900 hover:bg-emerald-700 text-white rounded-lg transition-all shrink-0", title: "登出鎖定" },
                                 e(Icon, { name: "lock", className: "w-4 h-4" })
                             )
                         )
@@ -1477,27 +1444,22 @@
                                     )
                                 ),
 
-                                // 3. 專項運動技能 (6 格，項目可選)
+                                // 3. 專項運動技能
                                 e('div', { className: "bg-green-50/50 rounded-xl p-3 border border-green-100" },
-                                    e('h4', { className: "text-xs font-bold text-emerald-800 uppercase tracking-wider mb-2 flex items-center gap-1" }, e(Icon, { name: "medal", className: "w-3.5 h-3.5 text-emerald-700" }), ` 3. 專項運動技能評核 (每格最高 ${SKILL_MAX_PER_SLOT} 分，技能總分上限 ${SKILL_TOTAL_CAP})`),
-                                    e('div', { className: "grid grid-cols-2 sm:grid-cols-3 gap-2" },
-                                        [1, 2, 3, 4, 5, 6].map(n => {
-                                            const itemKey = 'skillItem' + n, ptsKey = 'skillPts' + n;
-                                            const curItem = currentStudent[itemKey] || '';
-                                            const curPts = currentStudent[ptsKey] || 0;
-                                            const opts = (curItem && !SKILL_OPTIONS.includes(curItem)) ? [...SKILL_OPTIONS, curItem] : SKILL_OPTIONS;
-                                            return e('div', { key: n, className: "bg-white p-2 rounded-lg border border-green-100 text-center shadow-sm" },
-                                                e('select', { value: curItem, onChange: (evt) => updateStudentValue(currentStudent.id, itemKey, evt.target.value), className: "w-full bg-slate-100 border border-slate-200 rounded px-1 py-0.5 text-[10px] font-bold text-slate-600 mb-1" },
-                                                    e('option', { value: "" }, "選擇項目"),
-                                                    opts.map(o => e('option', { key: o, value: o }, o))
-                                                ),
-                                                e('div', { className: "flex items-center gap-1 justify-center" },
-                                                    e('button', { onClick: () => updateStudentValue(currentStudent.id, ptsKey, curPts - 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "-"),
-                                                    e('input', { type: "number", min: "0", max: String(SKILL_MAX_PER_SLOT), value: curPts, onChange: (evt) => updateStudentValue(currentStudent.id, ptsKey, evt.target.value), className: "w-9 text-center text-xs font-bold py-0.5 border-b focus:outline-none" }),
-                                                    e('button', { onClick: () => updateStudentValue(currentStudent.id, ptsKey, curPts + 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "+")
-                                                )
-                                            );
-                                        })
+                                    e('h4', { className: "text-xs font-bold text-emerald-800 uppercase tracking-wider mb-2 flex items-center gap-1" }, e(Icon, { name: "medal", className: "w-3.5 h-3.5 text-emerald-700" }), " 3. 專項運動技能評核 (最高加分 20)"),
+                                    e('div', { className: "grid grid-cols-3 gap-2" },
+                                        e('div', { className: "bg-white p-2 rounded-lg border border-green-100 text-center shadow-sm" },
+                                            e('label', { className: "block text-[9px] font-bold text-slate-400 mb-1" }, "籃球技術 (滿分 9)"),
+                                            e('div', { className: "flex items-center gap-1 justify-center" }, e('button', { onClick: () => updateStudentValue(currentStudent.id, 'basketball', currentStudent.basketball - 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "-"), e('span', { className: "text-xs font-bold w-4 text-center" }, currentStudent.basketball), e('button', { onClick: () => updateStudentValue(currentStudent.id, 'basketball', currentStudent.basketball + 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "+"))
+                                        ),
+                                        e('div', { className: "bg-white p-2 rounded-lg border border-green-100 text-center shadow-sm" },
+                                            e('label', { className: "block text-[9px] font-bold text-slate-400 mb-1" }, "舞蹈動作 (滿分 11)"),
+                                            e('div', { className: "flex items-center gap-1 justify-center" }, e('button', { onClick: () => updateStudentValue(currentStudent.id, 'dance', currentStudent.dance - 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "-"), e('span', { className: "text-xs font-bold w-4 text-center" }, currentStudent.dance), e('button', { onClick: () => updateStudentValue(currentStudent.id, 'dance', currentStudent.dance + 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "+"))
+                                        ),
+                                        e('div', { className: "bg-white p-2 rounded-lg border border-green-100 text-center shadow-sm" },
+                                            e('label', { className: "block text-[9px] font-bold text-slate-400 mb-1" }, "其他加分 (最高 20)"),
+                                            e('div', { className: "flex items-center gap-1 justify-center" }, e('button', { onClick: () => updateStudentValue(currentStudent.id, 'extraSkill', currentStudent.extraSkill - 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "-"), e('span', { className: "text-xs font-bold w-4 text-center" }, currentStudent.extraSkill), e('button', { onClick: () => updateStudentValue(currentStudent.id, 'extraSkill', currentStudent.extraSkill + 1), className: "w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded text-xs font-bold" }, "+"))
+                                        )
                                     )
                                 )
                             ),
@@ -1532,7 +1494,7 @@
                                                 e('div', { className: "flex justify-between items-center text-teal-200 font-bold" }, e('span', null, "DSE體能加總 (最高20分):"), e('span', null, `${studentScores?.dseTotalFitness}分`))
                                             )
                                         ),
-                                        e('div', { className: "flex justify-between items-center" }, e('span', { className: "text-emerald-200 flex items-center gap-1" }, e(Icon, { name: "crown", className: "w-3.5 h-3.5 text-emerald-400" }), " 專項運動技能:"), e('span', { className: "font-bold text-white" }, `${studentScores?.skill} / ${SKILL_TOTAL_CAP}`))
+                                        e('div', { className: "flex justify-between items-center" }, e('span', { className: "text-emerald-200 flex items-center gap-1" }, e(Icon, { name: "crown", className: "w-3.5 h-3.5 text-emerald-400" }), " 專項運動技能:"), e('span', { className: "font-bold text-white" }, `${studentScores?.skill} / 20`))
                                     )
                                 ),
                                 e('div', { className: "mt-4 pt-4 border-t border-white/10 flex items-center justify-between" },
@@ -1551,7 +1513,7 @@
                                     e('tr', { className: "bg-emerald-50 border-b border-emerald-100 text-[10px] font-bold text-emerald-800 uppercase tracking-wider text-center" },
                                         e('th', { className: "p-2.5 w-14" }, "班別"), e('th', { className: "p-2.5 w-14" }, "學號"), e('th', { className: "p-2.5 text-left w-24" }, "姓名"), e('th', { className: "p-2.5 w-14" }, "性別"), e('th', { className: "p-2.5 w-20" }, "課程分類"), e('th', { className: "p-2.5 w-16" }, "出席(20)"), e('th', { className: "p-2.5 w-20" }, "學習態度"), e('th', { className: "p-2.5 w-16" }, "身高(cm)"), e('th', { className: "p-2.5 w-16" }, "體重(kg)"), e('th', { className: "p-2.5 w-14" }, "BMI"),
                                         e('th', { className: "p-2.5" }, "體能測試細項指標 (支援直接手動輸入，計分常模即時聯動)"),
-                                        e('th', { className: "p-2.5" }, "專項運動技能 (項目可選，每格最高20分)"), e('th', { className: "p-2.5 w-20" }, "總分(100)"), e('th', { className: "p-2.5 w-16" }, "等第"), e('th', { className: "p-2.5 w-12" }, "操作")
+                                        e('th', { className: "p-2.5 w-16" }, "籃球(9)"), e('th', { className: "p-2.5 w-16" }, "跳舞(11)"), e('th', { className: "p-2.5 w-16" }, "其他"), e('th', { className: "p-2.5 w-20" }, "總分(100)"), e('th', { className: "p-2.5 w-16" }, "等第"), e('th', { className: "p-2.5 w-12" }, "操作")
                                     )
                                 ),
                                 e('tbody', { className: "divide-y divide-slate-100 text-xs font-medium text-center" },
@@ -1572,7 +1534,7 @@
                                         const dseRun1609 = isDse ? calculateDseRun1609Score(student.gender, student.dseRun1609Raw || 0) : 0;
                                         const dseSitReach = isDse ? calculateDseSitReachScore(student.gender, student.dseSitReachRaw || 0) : 0;
 
-                                        const skillScore = calcSkillTotal(student);
+                                        const skillScore = Math.min(20, (student.basketball || 0) + (student.dance || 0) + (student.extraSkill || 0));
                                         
                                         const fitnessTotal = isDse ? (dseSitUp + dsePullUp + dseRun1609 + dseSitReach) : (sitUpScore + pushUpScore + runScore + sitReachScore + run1000Score);
                                         const rawTotal = student.attendance + conductScore + fitnessTotal + skillScore;
@@ -1657,22 +1619,9 @@
                                                 )
                                             ),
 
-                                            e('td', { className: "p-1.5 text-[11px]" },
-                                                e('div', { className: "grid grid-cols-3 gap-1 justify-items-center" },
-                                                    [1, 2, 3, 4, 5, 6].map(n => {
-                                                        const itemKey = 'skillItem' + n, ptsKey = 'skillPts' + n;
-                                                        const curItem = student[itemKey] || '';
-                                                        const opts = (curItem && !SKILL_OPTIONS.includes(curItem)) ? [...SKILL_OPTIONS, curItem] : SKILL_OPTIONS;
-                                                        return e('div', { key: n, className: "flex items-center bg-emerald-50 border border-emerald-100 rounded px-1 py-0.5" },
-                                                            e('select', { value: curItem, onChange: (evt) => updateStudentValue(student.id, itemKey, evt.target.value), className: "w-14 bg-transparent text-[9px] font-bold text-slate-500 focus:outline-none" },
-                                                                e('option', { value: "" }, "項目"),
-                                                                opts.map(o => e('option', { key: o, value: o }, o))
-                                                            ),
-                                                            e('input', { type: "number", min: "0", max: String(SKILL_MAX_PER_SLOT), value: student[ptsKey] || "", onChange: (evt) => updateStudentValue(student.id, ptsKey, evt.target.value), className: "w-7 text-center bg-transparent font-bold focus:outline-none focus:bg-white" })
-                                                        );
-                                                    })
-                                                )
-                                            ),
+                                            e('td', { className: "p-1.5" }, e('input', { type: "number", min: "0", max: "9", value: student.basketball, onChange: (evt) => updateStudentValue(student.id, 'basketball', evt.target.value), className: "w-8 text-center py-0.5 border border-transparent hover:border-emerald-300 focus:border-emerald-500 focus:bg-white rounded font-bold" })),
+                                            e('td', { className: "p-1.5" }, e('input', { type: "number", min: "0", max: "11", value: student.dance, onChange: (evt) => updateStudentValue(student.id, 'dance', evt.target.value), className: "w-8 text-center py-0.5 border border-transparent hover:border-emerald-300 focus:border-emerald-500 focus:bg-white rounded font-bold" })),
+                                            e('td', { className: "p-1.5" }, e('input', { type: "number", min: "0", value: student.extraSkill || 0, onChange: (evt) => updateStudentValue(student.id, 'extraSkill', evt.target.value), className: "w-8 text-center py-0.5 border border-transparent hover:border-emerald-300 focus:border-emerald-500 focus:bg-white rounded font-bold" })),
                                             e('td', { className: "p-1.5 font-bold text-emerald-700 text-sm" }, total100),
                                             e('td', { className: "p-1.5" }, e('span', { className: `inline-block px-2 py-0.5 rounded-md text-[10px] font-black ${grade === 'A' ? 'bg-emerald-100 text-emerald-800' : grade === 'B' ? 'bg-blue-100 text-blue-800' : grade === 'C' ? 'bg-amber-100 text-amber-800' : grade === 'D' ? 'bg-orange-100 text-orange-800' : 'bg-rose-100 text-rose-800'}` }, grade)),
                                             e('td', { className: "p-1.5" }, e('button', { onClick: () => handleDeleteStudent(student.id, student.name), className: "p-1 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded transition-all" }, e(Icon, { name: "trash-2", className: "w-3.5 h-3.5" })))
